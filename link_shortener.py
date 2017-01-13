@@ -1,5 +1,19 @@
-from flask import Flask, url_for, request, json
-import MySQLdb, sys
+from flask import Flask, url_for, request, json, redirect
+import MySQLdb, sys, ConfigParser
+
+#Config reader helper method. Taken from online
+def ConfigSectionMap(section):
+    dict1 = {}
+    options = Config.options(section)
+    for option in options:
+        try:
+            dict1[option] = Config.get(section, option)
+            if dict1[option] == -1:
+                DebugPrint("skip: %s" % option)
+        except:
+            print("exception on %s!" % option)
+            dict1[option] = None
+    return dict1
 
 #Base62(0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ) encoding algorithm. Taken from online
 def encode(num, alphabet="123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"):
@@ -13,12 +27,20 @@ def encode(num, alphabet="123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRS
     arr.reverse()
     return ''.join(arr)
 
+	
+#Read in variable from settings.ini
+Config = ConfigParser.ConfigParser()
+Config.read("settings.ini")
+host = ConfigSectionMap("Database")['host']					   #your host, usually localhost
+user = ConfigSectionMap("Database")['user']					   #your username
+password = ConfigSectionMap("Database")['passwd']			   #your password
+database_name = ConfigSectionMap("Database")['database_name']  #your database name
+port = ConfigSectionMap("Server")['port']					   #your port number
+is_redirect = ConfigSectionMap("Server")['is_redirect']		   #does the server redirect you to the url? Is either "ON" or "OFF"
+
 #Connecting to the MySQL database. Set parameters in the ini file
 try:
-    db = MySQLdb.connect(host="localhost",    # your host, usually localhost
-						 user="root",         # your username
-						 passwd="password",   # your password
-						 db="noobcentral") 	  # your database
+    db = MySQLdb.connect(host, user, password, database_name)
     cursor = db.cursor()        
     cursor.execute("""CREATE TABLE IF NOT EXISTS links (
 					  link_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -26,7 +48,7 @@ try:
 					  link_key varchar(64),
 					  PRIMARY KEY (link_id))""")	
 except MySQLdb.Error:
-	sys.exit("ERROR IN CONNECTION")
+	sys.exit("ERROR IN DATABASE CONNECTION")
 
 #Setting up the server.
 app = Flask(__name__)	
@@ -36,7 +58,7 @@ app = Flask(__name__)
 def api_root():
 
 	if request.method == 'GET':
-		return "ECHO: GET\n"
+		return "yay it works"
 
 	elif request.method == 'POST' and request.headers['Content-Type'] == 'application/json':
 		dataDict = json.loads(request.data)	
@@ -55,17 +77,17 @@ def api_root():
 					cursor.execute("""UPDATE links SET link_key = %s
 									  WHERE link_id = %s""", (key, cursor.lastrowid,))
 					db.commit()
-					return "localhost:5000/" + key
+					return "{'response': 'localhost:" + port + "/" + key + "'}"
 					
 				#if the url is in the table, we just return the link key
 				else:
-					return "localhost:5000/" + cursor.fetchone()[2]		
+					return "{'response': 'localhost:" + port + "/" + cursor.fetchone()[2] + "'}"		
 			except MySQLdb.Error:
-				return "Something blew up in the sql query"
+				return "{'response': 'Something blew up in the sql query'}"
 		else:
-			return "You need to have a url key in the json request. See the readme!"
+			return "{'response': 'You need to have a url key in the json request. See the readme!'}"
 	else:
-		return "You need to send a json request. See the readme!";
+		return "{'response': 'You need to send a json request. See the readme!'}";
 
 #Encoded url page. Returns the website link.		
 @app.route('/<link_key>')
@@ -74,12 +96,16 @@ def api_link_key(link_key):
 		cursor.execute("""SELECT * FROM links 
 						  WHERE link_key = %s""", (link_key,))
 		if cursor.rowcount == 0:
-			return "invalid key"
+			return "{'response': 'invalid key'}"
 		else:
-			return cursor.fetchone()[1]
+			if is_redirect == "OFF":
+				return "{'response': '" + cursor.fetchone()[1] + "'}"
+			else:
+				return redirect(cursor.fetchone()[1])
 	except MySQLdb.Error:
-		return "Something blew up in the sql query"
+		return "{'response': 'Something blew up in the sql query'}"
 
-app.run()
+#Run the server!
+app.run(port = port)
 
 
